@@ -9,6 +9,7 @@ from ..client import DecompilerClient
 from ...utils import *
 from .utils import *
 from .symbol_mapper import SymbolMapper
+from .struct_importer import StructImporter
 from .decompiler_pane import DecompilerPane
 
 #
@@ -21,6 +22,7 @@ class GDBDecompilerClient(DecompilerClient):
         super(GDBDecompilerClient, self).__init__(name=name, host=host, port=port)
         self.gdb_client: "GDBClient" = gdb_client
         self.symbol_mapper = SymbolMapper()
+        self.struct_importer = StructImporter()
         self._is_pie = None
         self._lvar_bptr = None
 
@@ -85,6 +87,14 @@ class GDBDecompilerClient(DecompilerClient):
             return False
 
         return True
+
+    def update_structs(self):
+        struct_string = self.struct_strings
+        try:
+            return self.struct_importer.import_struct(struct_string)
+        except Exception as e:
+            err(f"Failed to import structs: {e}")
+            return False
 
     def update_global_vars(self):
         return self.global_vars
@@ -322,6 +332,7 @@ class GDBClient:
         if self.base_addr_start is None:
             self.base_addr_start = self.find_text_segment_base_addr(is_remote=is_remote_debug())
         self.dec_client.update_symbols()
+        self.dec_client.update_structs()
         self.register_decompiler_context_pane(decompiler_name)
 
     def on_decompiler_disconnected(self, decompiler_name):

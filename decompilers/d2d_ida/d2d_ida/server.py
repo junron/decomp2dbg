@@ -12,8 +12,9 @@
 from xmlrpc.server import SimpleXMLRPCServer, SimpleXMLRPCRequestHandler
 import threading
 import functools
+import string
 
-import ida_hexrays, ida_funcs, idc, ida_pro, ida_lines, idaapi, idautils, ida_segment
+import ida_hexrays, ida_funcs, idc, ida_pro, ida_lines, idaapi, idautils, ida_segment, ida_typeinf
 
 
 class RequestHandler(SimpleXMLRPCRequestHandler):
@@ -76,6 +77,46 @@ def execute_write(func):
 def execute_ui(func):
     return execute_sync(func, idaapi.MFF_FAST)
 
+def get_struct_strings():
+    idati = ida_typeinf.get_idati()
+
+    valid_structs = []
+    names = []
+    for ordinal in range(1, ida_typeinf.get_ordinal_qty(idati)+1):
+        ti = ida_typeinf.tinfo_t()
+        if ti.get_numbered_type(idati, ordinal):
+            if all(char in string.ascii_letters + string.digits + "_" for char in ti.get_type_name()):
+                valid_structs.append(ordinal)
+                names.append(ti.get_type_name())
+            else:
+                print("Skipping:", ti)
+
+    prelim = idc.print_decls(",".join(str(x) for x in valid_structs), ida_typeinf.PDF_DEF_BASE | ida_typeinf.PDF_DEF_FWD | ida_typeinf.PDF_INCL_DEPS)
+
+    out = ""
+
+    struct_name = None
+    for line in prelim.splitlines():
+        if not line:
+            out += line + "\n"
+            continue
+        if line.startswith("struct"):
+            struct_name = line.split(" ")[-1].strip(";")
+            if ";" in line:
+                out += f"typedef struct {struct_name} {struct_name};\n"
+                struct_name = None
+                continue
+            out += "typedef " + line + "\n"
+            continue
+        
+        if line == "};" and struct_name is not None:
+            out += "} " + struct_name+";\n"
+            struct_name = None
+            continue
+
+        out += line + "\n"
+        
+    return out
 
 #
 # Decompilation API
@@ -292,6 +333,10 @@ class IDADecompilerServer:
             resp["struct_info"].append(struct_info)
         return resp
 
+    @execute_read
+    def struct_strings(self):
+        return get_struct_strings()
+    
     def breakpoints(self):
         resp = {}
         return resp
@@ -325,6 +370,7 @@ class IDADecompilerServer:
         server.register_function(self.structs)
         server.register_function(self.breakpoints)
         server.register_function(self.ping)
+        server.register_function(self.struct_strings)
         print("[+] Registered decompilation server!")
         while True:
             server.handle_request()

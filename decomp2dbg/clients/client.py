@@ -99,6 +99,11 @@ class DecompilerClient:
     @only_if_connected
     def structs(self):
         return self.server.structs()
+    
+    @property
+    @only_if_connected
+    def struct_strings(self):
+        return self.server.struct_strings()
 
     @property
     @only_if_connected
