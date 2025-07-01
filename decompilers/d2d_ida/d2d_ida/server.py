@@ -19,6 +19,8 @@ import ida_hexrays, ida_funcs, idc, ida_pro, ida_lines, idaapi, idautils, ida_se
 
 class RequestHandler(SimpleXMLRPCRequestHandler):
     rpc_paths = ("/RPC2",)
+
+
 #
 # Wrappers for IDA Main thread r/w operations
 #
@@ -63,6 +65,7 @@ def execute_sync(func, sync_type):
 
         # return the output of the synchronized execution
         return output[0]
+
     return wrapper
 
 
@@ -77,21 +80,28 @@ def execute_write(func):
 def execute_ui(func):
     return execute_sync(func, idaapi.MFF_FAST)
 
+
 def get_struct_strings():
     idati = ida_typeinf.get_idati()
 
     valid_structs = []
     names = []
-    for ordinal in range(1, ida_typeinf.get_ordinal_qty(idati)+1):
+    for ordinal in range(1, ida_typeinf.get_ordinal_count(idati)):
         ti = ida_typeinf.tinfo_t()
         if ti.get_numbered_type(idati, ordinal):
-            if all(char in string.ascii_letters + string.digits + "_" for char in ti.get_type_name()):
+            if all(
+                char in string.ascii_letters + string.digits + "_"
+                for char in ti.get_type_name()
+            ):
                 valid_structs.append(ordinal)
                 names.append(ti.get_type_name())
             else:
                 print("Skipping:", ti)
 
-    prelim = idc.print_decls(",".join(str(x) for x in valid_structs), ida_typeinf.PDF_DEF_BASE | ida_typeinf.PDF_DEF_FWD | ida_typeinf.PDF_INCL_DEPS)
+    prelim = idc.print_decls(
+        ",".join(str(x) for x in valid_structs),
+        ida_typeinf.PDF_DEF_BASE | ida_typeinf.PDF_DEF_FWD | ida_typeinf.PDF_INCL_DEPS,
+    )
 
     out = ""
 
@@ -108,28 +118,37 @@ def get_struct_strings():
                 continue
             out += "typedef " + line + "\n"
             continue
-        
-        if line == "};" and struct_name is not None:
-            out += "} " + struct_name+";\n"
-            struct_name = None
+
+        if line.startswith("#define"):
+            out += line + "\n"
+
+        if struct_name is None:
             continue
 
+        if line == "};":
+            out += "} " + struct_name + ";\n"
+            struct_name = None
+            continue
+        if "__offset(" in line:
+            line = line.rsplit("__offset(", maxsplit=1)[0] + ";"
+        elif "__off;" in line:
+            line = line.rsplit("__off;", maxsplit=1)[0] + ";"
+
         out += line + "\n"
-        
+
     return out
+
 
 #
 # Decompilation API
 #
 
+
 class IDADecompilerServer:
     def __init__(self, host=None, port=None):
         self.host = host
         self.port = port
-        self.cache = {
-            "global_vars": None,
-            "function_headers": None
-        }
+        self.cache = {"global_vars": None, "function_headers": None}
         self._base_addr = None
 
         # make the server init cache data once
@@ -147,7 +166,6 @@ class IDADecompilerServer:
             rebased += self._base_addr
 
         return rebased
-
 
     @execute_read
     def decompile(self, addr):
@@ -198,10 +216,7 @@ class IDADecompilerServer:
     @execute_read
     def function_data(self, addr):
         addr = self.rebase_addr(addr)
-        resp = {
-            "stack_vars": None,
-            "reg_vars": None
-        }
+        resp = {"stack_vars": None, "reg_vars": None}
 
         # get the function
         ida_func = ida_funcs.get_func(addr)
@@ -226,20 +241,14 @@ class IDADecompilerServer:
             # stack variables
             if var.is_stk_var():
                 offset = cfunc.mba.stacksize - var.location.stkoff()
-                stack_vars[str(offset)] = {
-                    "name": var.name,
-                    "type": str(var.type())
-                }
+                stack_vars[str(offset)] = {"name": var.name, "type": str(var.type())}
 
             # register variables
             elif var.is_reg_var():
                 regnum = var.get_reg1()
                 reg_name = idaapi.get_mreg_name(regnum, var.width)
 
-                reg_vars[var.name] = {
-                    "reg_name": reg_name,
-                    "type": str(var.type())
-                }
+                reg_vars[var.name] = {"reg_name": reg_name, "type": str(var.type())}
                 pass
 
         resp["stack_vars"] = stack_vars
@@ -270,7 +279,7 @@ class IDADecompilerServer:
                 func_size = ida_funcs.get_func(f_addr).size()
                 resp[str(self.rebase_addr(f_addr, down=True))] = {
                     "name": func_name,
-                    "size": func_size
+                    "size": func_size,
                 }
 
         self.cache["function_headers"] = resp
@@ -301,42 +310,41 @@ class IDADecompilerServer:
                 if not name:
                     continue
 
-                resp[str(self.rebase_addr(seg_ea, down=True))] = {
-                    "name": name
-                }
+                resp[str(self.rebase_addr(seg_ea, down=True))] = {"name": name}
 
         self.cache["global_vars"] = resp
         return resp
 
     @execute_read
     def structs(self):
+        idati = ida_typeinf.get_idati()
         resp = {}
-        for i in range(idaapi.get_struc_qty()):
-            struct_id = idaapi.get_struc_by_idx(i)
-            struct = idaapi.get_struc(struct_id)
-            struct_info = {
-                "name": idaapi.get_struc_name(struct.id),
-                "members": []
-            }
-
-            for member in struct.members:
-                member_info = {
-                    "name": idaapi.get_member_name(member.id)
+        for ordinal in range(1, ida_typeinf.get_ordinal_count(idati)):
+            ti = ida_typeinf.tinfo_t()
+            if ti.get_numbered_type(idati, ordinal) and ti.is_struct():
+                udt_data = ida_typeinf.udt_type_data_t()
+                ti.get_udt_details(udt_data)
+                struct_info = {
+                    "name": ti.get_type_name(),
+                    "members": []
                 }
 
-                tif = idaapi.tinfo_t()
-                if idaapi.get_member_tinfo(tif, member):
-                    member_info["type"] = tif.__str__()
-                member_info["size"] = tif.get_size()
-                struct_info["members"].append(member_info)
+                for i in range(udt_data.size()):
+                    member = udt_data[i]
+                    member_info = {
+                        "name": member.name,
+                        "size": member.size // 8,
+                        "type": str(member.type)
+                    }
+                    struct_info["members"].append(member_info)
 
-            resp["struct_info"].append(struct_info)
+                resp["struct_info"].append(struct_info)
         return resp
 
     @execute_read
     def struct_strings(self):
         return get_struct_strings()
-    
+
     def breakpoints(self):
         resp = {}
         return resp
@@ -360,7 +368,7 @@ class IDADecompilerServer:
             (host, port),
             requestHandler=RequestHandler,
             logRequests=False,
-            allow_none=True
+            allow_none=True,
         )
         server.register_introspection_functions()
         server.register_function(self.decompile)
