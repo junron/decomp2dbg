@@ -13,7 +13,7 @@ import threading
 from PyQt5.QtCore import QObject
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QMessageBox, QGridLayout
 
-import idaapi, ida_idp
+import idaapi, ida_idp, idc
 
 from .server import IDADecompilerServer
 
@@ -43,6 +43,19 @@ class IDBHooks(ida_idp.IDB_Hooks):
             pass
 
         return 0
+
+
+def do_start(change_hook, host, port):
+    decomp_server = IDADecompilerServer()
+    t = threading.Thread(target=decomp_server.start_xmlrpc_server, kwargs={'host': host, 'port': int(port)})
+    t.daemon = True
+    try:
+        t.start()
+        # start hooks on good connection
+        change_hook.hook()
+    except Exception as e:
+        traceback.print_exc()
+        return
 
 
 #
@@ -121,18 +134,7 @@ class ConfigDialog(QDialog):
                                        )
             return
 
-        decomp_server = IDADecompilerServer()
-        t = threading.Thread(target=decomp_server.start_xmlrpc_server, kwargs={'host': host, 'port': int(port)})
-        t.daemon = True
-        try:
-            t.start()
-            # start hooks on good connection
-            self.change_hook.hook()
-        except Exception as e:
-            QMessageBox(self).critical(None, "Error starting Decomp2DBG Server", str(e))
-            traceback.print_exc()
-            return
-
+        do_start(self.change_hook, host, port)
         self.close()
 
     def _on_cancel_clicked(self):
@@ -172,11 +174,16 @@ class Decomp2DBGPlugin(QObject, idaapi.plugin_t):
         return idaapi.PLUGIN_KEEP
 
     def run(self, arg):
-        self.open_config_dialog()
+        # Use default settings in headless mode
+        if idc.ARGV:
+            do_start(self.change_hook, "localhost", 3662)
+        else:
+            self.open_config_dialog()
+
 
     def open_config_dialog(self):
-        dialog = ConfigDialog(self.change_hook)
-        dialog.exec_()
+        self.dialog = ConfigDialog(self.change_hook)
+        self.dialog.exec_()
 
     def term(self):
         pass
