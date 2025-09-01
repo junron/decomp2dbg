@@ -13,7 +13,7 @@ import threading
 from PyQt5.QtCore import QObject
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QMessageBox, QGridLayout
 
-import idaapi, ida_idp, ida_struct, idc, ida_enum
+import idaapi, ida_idp
 
 from .server import IDADecompilerServer
 
@@ -29,9 +29,6 @@ class IDBHooks(ida_idp.IDB_Hooks):
         ida_idp.IDB_Hooks.__init__(self)
 
     def renamed(self, ea, new_name, local_name):
-        if ida_struct.is_member_id(ea) or ida_struct.get_struc(ea) or ida_enum.get_enum_name(ea):
-            return 0
-
         # renaming a function header
         ida_func = idaapi.get_func(ea)
         if ida_func and ida_func.start_ea == ea:
